@@ -481,7 +481,12 @@
   }
 
   /* Keeps the pages available offline once they have been opened over https. */
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    const had = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {});
+    /* When a newer version of the site takes over, reload once so nobody keeps looking at an old copy. */
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !window.ttReloaded) { window.ttReloaded = true; location.reload(); } });
+  }
 
   S.live.onNewOrder = o => toast(`New order ${o.ref} from ${o.name}`);
 
