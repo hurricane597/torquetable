@@ -27,6 +27,9 @@
   const CUSTOMER_NAV = [['', 'Home', 'home'], ['menu', 'Weekly Menu', 'menu'], ['how', 'How It Works', 'how'], ['area', 'Delivery Area', 'area'], ['contact', 'Contact', 'contact']];
   const CHEF_NAV = [['chef', 'Orders', 'orders'], ['chef/prep', 'Prep list', 'prep'], ['chef/menu', 'Menu', 'menu'], ['chef/settings', 'Settings', 'settings']];
 
+  /* The chef's desk exists only on the chef's own page (chef.html) and in the chef's phone app, never on the customer site. */
+  const CHEF_APP = !!(window.TT_CHEF || (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App));
+
   let route = '', ui = { tried: false, placing: false, orderFilter: 'active', prepDate: null, policy: null };
 
   /* ---------- shell ---------- */
@@ -39,7 +42,7 @@
     const mine = S.state.mine.length;
     $('#actions').innerHTML = chef
       ? `<a class="pill-link" href="#/menu">${document.documentElement.classList.contains('native') ? 'Preview customer site' : 'Customer view'}</a>`
-      : `${mine ? `<a class="pill-link" href="#/orders">My orders</a>` : ''}<a class="pill-link ghost" href="#/chef">Chef's desk</a>`;
+      : `${mine ? `<a class="pill-link" href="#/orders">My orders</a>` : ''}${CHEF_APP ? `<a class="pill-link ghost" href="#/chef">Chef's desk</a>` : ''}`;
     document.body.classList.toggle('chef', chef);
     const ct = S.cart(), bar = $('#cartbar');
     const show = !chef && ct.count > 0 && !['checkout'].includes(route) && !route.startsWith('order');
@@ -49,6 +52,7 @@
 
   function render() {
     route = location.hash.replace(/^#\/?/, '');
+    if (route.startsWith('chef') && !CHEF_APP) { location.replace('#/'); return; }
     renderShell();
     const [a, b] = route.split('/');
     const y = window.scrollY;
