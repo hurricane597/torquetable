@@ -52,9 +52,10 @@
     renderShell();
     const [a, b] = route.split('/');
     const y = window.scrollY;
-    if (a === 'chef') ({ undefined: chefOrders, prep: chefPrep, menu: chefMenu, settings: chefSettings }[b] || chefOrders)();
+    if (a === 'chef') { if (S.remote && !S.live.isChef) chefLogin(); else ({ undefined: chefOrders, prep: chefPrep, menu: chefMenu, settings: chefSettings }[b] || chefOrders)(); }
     else if (a === 'order' && b) orderPage(b);
     else ({ '': home, menu: menuPage, how: howPage, area: areaPage, contact: contactPage, checkout: checkout, orders: myOrders }[a] || home)();
+    if (S.remote && S.live.error) view.insertAdjacentHTML('afterbegin', '<p class="notice closed"><b>Can\'t reach the server.</b> You are seeing the last saved version; ordering needs a connection.</p>');
     if (render.last === route) window.scrollTo(0, y); else { window.scrollTo(0, 0); render.last = route; }
   }
 
@@ -225,20 +226,22 @@
       </div>`;
   }
 
-  function submitOrder() {
+  async function submitOrder() {
     if (ui.placing) return;
     const st = S.state;
     ui.tried = true;
     if (Object.keys(S.validate(st.draft)).length) { render(); const bad = view.querySelector('.bad input, .bad select'); if (bad) bad.focus(); return; }
     ui.placing = true; render();
     const key = st.checkoutKey;
-    setTimeout(() => {
-      const r = S.placeOrder(st.draft, key);
-      ui.placing = false;
-      if (r.order) { ui.tried = false; location.hash = '#/order/' + r.order.ref; return; }
-      render();
-      toast({ closed: 'Orders have just closed for this week.', stale: 'Some meals changed — please review your order.', minimum: 'Your order is below the minimum.', empty: 'Your order is empty.', invalid: 'Please check the highlighted fields.' }[r.error] || 'Something went wrong.');
-    }, 650);
+    const [r] = await Promise.all([S.placeOrder(st.draft, key), new Promise(done => setTimeout(done, 500))]);
+    ui.placing = false;
+    if (r.order) { ui.tried = false; location.hash = '#/order/' + r.order.ref; return; }
+    render();
+    toast({
+      closed: 'Orders have just closed for this week.', stale: 'Some meals just sold out or changed — please review your order.',
+      minimum: 'Your order is below the minimum.', empty: 'Your order is empty.', invalid: 'Please check the highlighted fields.',
+      window: 'That delivery window just filled up. Please choose another.', network: 'Could not reach the server. Your order was not placed — please try again.',
+    }[r.error] || 'Something went wrong. Your order was not placed.');
   }
 
   /* ---------- customer: confirmation / tracking ---------- */
@@ -267,6 +270,19 @@
     const mine = S.state.mine.map(S.order).filter(Boolean);
     view.innerHTML = `<header class="page-head"><h1>My orders</h1><p>Orders placed from this device.</p></header>
       ${mine.length ? mine.map(o => orderCard(o)).join('') : '<p class="empty">You haven\'t placed an order yet.</p><p class="center"><a class="btn" href="#/menu">Browse the menu</a></p>'}`;
+  }
+
+  /* ---------- chef: sign in ---------- */
+  function chefLogin() {
+    const L = S.live;
+    view.innerHTML = `<header class="page-head center"><p class="script">Chef's desk</p><h1>Sign in</h1><p>${L.signedIn ? `${esc(L.email)} does not have chef access.` : 'Orders, the prep list and the menu are only visible to the chef.'}</p></header>
+      <form class="card form login" id="login-form" novalidate>
+        <label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" autocapitalize="off" value="${esc(ui.loginEmail || '')}" required></label>
+        <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
+        ${ui.loginError ? `<p class="err">${esc(ui.loginError)}</p>` : ''}
+        <button class="btn wide" type="submit"${ui.signingIn ? ' disabled' : ''}>${ui.signingIn ? 'Signing in…' : 'Sign in'}</button>
+        ${L.signedIn ? '<button type="button" class="link" data-act="sign-out">Sign out</button>' : ''}
+      </form>`;
   }
 
   /* ---------- chef: orders ---------- */
@@ -382,19 +398,21 @@
       <section class="card form"><h3>Contact details shown to customers</h3>
         <div class="pair">${f('chefName', 'Chef name')}${f('base', 'Kitchen location (shown to customers)')}</div><div class="pair">${f('chefPhone', 'Phone / WhatsApp')}${f('chefEmail', 'Email')}</div>
       </section>
-      <section class="card"><h3>Demo data</h3><p>Puts the sample menu and orders back and clears everything else.</p><p><button class="btn outline" data-act="reset">Reset demo data</button></p></section>`;
+      ${S.remote
+        ? `<section class="card"><h3>Account</h3><p>Signed in as ${esc(S.live.email)}. Orders and menu changes are shared live with the website.</p><p><button class="btn outline" data-act="sign-out">Sign out</button></p></section>`
+        : `<section class="card"><h3>Demo data</h3><p>Puts the sample menu and orders back and clears everything else.</p><p><button class="btn outline" data-act="reset">Reset demo data</button></p></section>`}`;
   }
 
   /* ---------- events ---------- */
-  document.addEventListener('click', ev => {
+  document.addEventListener('click', async ev => {
     const t = ev.target.closest('[data-act]'); if (!t) return;
     const { act, id, ref, k } = t.dataset, st = S.state;
     if (act === 'close-sheet') closeSheet();
     else if (act === 'qty') S.setQty(id, (st.cart[id] || 0) + Number(t.dataset.d));
     else if (act === 'meal') mealSheet(id);
     else if (act === 'cancel-mine') {
-      const r = S.cancelByCustomer(ref);
-      if (r.error === 'policy') { ui.policy = ref; render(); } else if (r.ok) { ui.policy = null; toast(`Order ${ref} cancelled.`); }
+      const r = await S.cancelByCustomer(ref);
+      if (r.error === 'policy') { ui.policy = ref; render(); } else if (r.ok) { ui.policy = null; toast(`Order ${ref} cancelled.`); } else toast(r.error);
     }
     else if (act === 'order-filter') { ui.orderFilter = k; render(); }
     else if (act === 'prep-date') { ui.prepDate = k; render(); }
@@ -402,16 +420,18 @@
     else if (act === 'order-detail') { ui.reveal = null; orderSheet(ref); }
     else if (act === 'reveal') { ui.reveal = ref; orderSheet(ref); }
     else if (act === 'status') {
-      const r = S.setStatus(ref, t.dataset.s);
+      t.disabled = true;
+      const r = await S.setStatus(ref, t.dataset.s);
       toast(r.error || `${ref}: ${STATUS[t.dataset.s]}. Customer notified.`);
       if (ui.sheet && ui.sheet[0] === 'order') orderSheet(ref);
     }
-    else if (act === 'left') { const m = S.meal(id); m.left = Math.max(0, m.left + Number(t.dataset.d)); S.save(); }
-    else if (act === 'publish') { const r = S.setPublished(id, !!t.dataset.on); if (r.error) toast(r.error); }
+    else if (act === 'left') { const r = await S.setLeft(id, S.meal(id).left + Number(t.dataset.d)); if (r.error) toast(r.error); }
+    else if (act === 'publish') { const r = await S.setPublished(id, !!t.dataset.on); if (r.error) toast(r.error); }
     else if (act === 'meal-new') mealForm();
     else if (act === 'meal-edit') mealForm(id);
-    else if (act === 'meal-delete') { if (confirm('Delete this meal from the menu?')) { S.deleteMeal(id); closeSheet(); } }
+    else if (act === 'meal-delete') { if (confirm('Delete this meal from the menu?')) { const r = await S.deleteMeal(id); if (r.error) toast(r.error); else closeSheet(); } }
     else if (act === 'del-day') { const n = Number(k), d = st.settings.deliveryDays; S.saveSettings({ deliveryDays: d.includes(n) ? d.filter(x => x !== n) : [...d, n] }); }
+    else if (act === 'sign-out') { await S.signOut(); toast('Signed out.'); }
     else if (act === 'reset') { if (confirm('Reset all demo data? Orders and menu changes will be lost.')) { S.reset(); toast('Demo data reset.'); } }
   });
 
@@ -423,15 +443,20 @@
     const t = ev.target;
     if (t.dataset.f && 'rerender' in t.dataset) render();
     else if (t.dataset.act === 'area-check') { ui.areaCheck = t.value; render(); }
-    else if (t.dataset.set) S.saveSettings({ [t.dataset.set]: t.type === 'checkbox' ? t.checked : t.value });
+    else if (t.dataset.set) S.saveSettings({ [t.dataset.set]: t.type === 'checkbox' ? t.checked : t.value }).then(r => { if (r.error) toast(r.error); });
   });
   document.addEventListener('submit', ev => {
     ev.preventDefault();
     if (ev.target.id === 'checkout-form') submitOrder();
+    else if (ev.target.id === 'login-form') {
+      const f = new FormData(ev.target);
+      ui.loginEmail = f.get('email'); ui.loginError = null; ui.signingIn = true; render();
+      S.signIn(f.get('email'), f.get('password')).then(r => { ui.signingIn = false; ui.loginError = r.error || null; render(); });
+    }
     else if (ev.target.id === 'meal-form') {
       const data = Object.fromEntries(new FormData(ev.target)); data.id = ev.target.dataset.id;
       if (!data.name.trim()) { toast('Give the meal a name.'); return; }
-      S.saveMeal(data); closeSheet(); toast('Meal saved.');
+      S.saveMeal(data).then(r => { if (r.error) toast(r.error); else { closeSheet(); toast('Meal saved.'); } });
     }
   });
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeSheet(); });
@@ -454,7 +479,9 @@
   /* Keeps the pages available offline once they have been opened over https. */
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 
+  S.live.onNewOrder = o => toast(`New order ${o.ref} from ${o.name}`);
+
   S.subscribe(render);
-  window.addEventListener('hashchange', () => { closeSheet(); ui.tried = false; ui.policy = null; render(); });
+  window.addEventListener('hashchange', () => { closeSheet(); ui.tried = false; ui.policy = null; render(); if (/^#\/(checkout|order)/.test(location.hash)) { S.refreshCounts(); S.refreshOrders(); } });
   render();
 })();

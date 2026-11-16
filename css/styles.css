@@ -271,3 +271,5 @@ input:focus, select:focus { outline: 0; border-color: var(--gold); box-shadow: 0
   .fine, .page-head p, small { color: #333; }
   .view { padding: 0; }
 }
+
+.login { max-width: 420px; margin: 0 auto; }
